@@ -88,7 +88,7 @@ button { font: inherit; color: inherit; }
 .canvas {
   min-width: 0; min-height: 0; padding: 12px;
   background: var(--layer); border: 1px solid var(--stroke); border-radius: var(--radius-lg);
-  display: flex;
+  display: flex; flex-direction: column; gap: 10px;
 }
 .empty { margin: auto; text-align: center; max-width: 340px; color: var(--text-2); }
 .empty h2 { color: var(--text); margin-bottom: 4px; }
@@ -372,3 +372,11 @@ button { font: inherit; color: inherit; }
 .crash p { margin: 0; color: var(--text-2); }
 .crash pre { margin: 0; padding: 10px; border-radius: var(--radius); border: 1px solid var(--stroke); background: var(--card); white-space: pre-wrap; font: 12px ui-monospace, Consolas, monospace; }
 .crash-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Window switcher */
+.switcher { display: flex; align-items: center; justify-content: center; gap: 8px; flex: none; }
+.switcher-label { font-size: 12px; color: var(--text-2); }
+.switcher-select { height: 34px; padding: 0 8px; border: 1px solid var(--stroke-strong); border-radius: var(--radius); background: var(--card); color: var(--text-2); cursor: pointer; }
+.switcher-select.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; border-color: var(--accent); }
+.switcher-select option:disabled { color: var(--text-3); }
+.tile.empty-slot { border-style: dashed; box-shadow: none; background: transparent; color: var(--text-3); font-size: 12px; cursor: default; }

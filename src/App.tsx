@@ -11,6 +11,7 @@ import { isEdited, type Edits } from './lib/layers';
 import { ingestFile, fmtBytes } from './lib/ingest';
 import { MAX_FILES, MAX_STORED_BYTES, GUEST_TTL_MS, PREVIEW_MAX_EDGE } from './lib/limits';
 import { renderer } from './lib/render';
+import { DEFAULT_SLOTS, effectiveSlots, gridAreas, slotOptions } from './lib/layout';
 import { unsupportedReason } from './lib/support';
 import { adoptGuestFiles, deleteMockup, getBlob, getState, listMockups, previewKey, releaseOwnedFiles, setState, sweepExpired } from './lib/store';
 import type { IngestProgress, MockupRecord } from './lib/types';
@@ -31,20 +32,6 @@ const STAGE_LABEL: Record<IngestProgress['stage'], string> = {
   parsing: 'Parsing layers',
   compressing: 'Compressing layers',
   saving: 'Saving',
-};
-
-/** Grid-template-areas for 1 to 10 tiles. */
-const BENTO: Record<number, string[]> = {
-  1: ['a'],
-  2: ['a b'],
-  3: ['a b', 'a c'],
-  4: ['a b', 'c d'],
-  5: ['a a b', 'c d b'],
-  6: ['a b c', 'd e f'],
-  7: ['a a b c', 'd e f g'],
-  8: ['a b c d', 'e f g h'],
-  9: ['a b c', 'd e f', 'g h i'],
-  10: ['a b c d e', 'f g h i j'],
 };
 
 function useStoredPreview(id: string) {
@@ -235,6 +222,7 @@ export function App() {
   const busyRef = useRef(false);
   const queue = useRef<{ key: string; file: File; backup: boolean }[]>([]);
   const [backupOn, setBackupOn] = useState(false);
+  const [chosenSlots, setChosenSlots] = useState(DEFAULT_SLOTS);
   const [backups, setBackups] = useState<Record<string, BackupStatus>>({});
   const backupChain = useRef<Promise<void>>(Promise.resolve());
   const rendersRef = useRef(renders);
@@ -354,9 +342,10 @@ export function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [e, b, bk] = await Promise.all([getState<Record<string, Edits>>('edits'), getState<BulkSettings>('bulk'), getState<boolean>('backupPsd')]);
+        const [e, b, bk, sl] = await Promise.all([getState<Record<string, Edits>>('edits'), getState<BulkSettings>('bulk'), getState<boolean>('backupPsd'), getState<number>('slots')]);
         if (e) setEdits(e);
         if (bk) setBackupOn(true);
+        if (typeof sl === 'number') setChosenSlots(sl);
         if (b) setBulk({ ...defaultBulkSettings(), ...b });
       } catch (err) {
         console.warn('Could not restore saved settings', err);
@@ -371,9 +360,10 @@ export function App() {
       void setState('edits', edits).catch(() => undefined);
       void setState('bulk', bulk).catch(() => undefined);
       void setState('backupPsd', backupOn).catch(() => undefined);
+      void setState('slots', chosenSlots).catch(() => undefined);
     }, 400);
     return () => clearTimeout(t);
-  }, [edits, bulk, backupOn, persistLoaded]);
+  }, [edits, bulk, backupOn, chosenSlots, persistLoaded]);
 
   // Edits for mockups that no longer exist (expired or removed) are dropped.
   useEffect(() => {
@@ -405,7 +395,8 @@ export function App() {
     });
   }, [designs.items, designs.ready, persistLoaded]);
 
-  const shown = useMemo(() => mockups.filter((m) => selected.has(m.id)).slice(0, MAX_FILES), [mockups, selected]);
+  const slots = effectiveSlots(chosenSlots, mockups.length);
+  const shown = useMemo(() => mockups.filter((m) => selected.has(m.id)).slice(0, slots), [mockups, selected, slots]);
   const designVersion = design ? `${design.id}:${design.fit}` : 'none';
 
   const editsKey = JSON.stringify(edits);
@@ -454,7 +445,6 @@ export function App() {
   }, [shown.map((m) => m.id).join(','), designVersion, editsKey]);
 
   const used = useMemo(() => mockups.reduce((s, m) => s + m.storedBytes, 0), [mockups]);
-  const areas = BENTO[shown.length];
   const focused = mockups.find((m) => m.id === focusId);
   const letters = 'abcdefghij';
 
@@ -528,9 +518,7 @@ export function App() {
           ) : (
             <div
               className="bento"
-              style={{
-                gridTemplateAreas: areas.map((r) => `"${r.split(' ').map((c) => 'm' + c).join(' ')}"`).join(' '),
-              }}
+              style={{ gridTemplateAreas: gridAreas(slots) }}
             >
               {shown.map((m, i) => (
                 <div key={m.id} style={{ gridArea: 'm' + letters[i] }} className="cell">
@@ -548,8 +536,38 @@ export function App() {
                   />
                 </div>
               ))}
+              {Array.from({ length: slots - shown.length }, (_, i) => (
+                <div key={`empty-${i}`} style={{ gridArea: 'm' + letters[shown.length + i] }} className="cell">
+                  <div className="tile empty-slot" aria-hidden="true">
+                    Empty window
+                  </div>
+                </div>
+              ))}
             </div>
           )}
+          <div className="switcher" role="group" aria-label="Number of windows">
+            <span className="switcher-label">Windows</span>
+            <div className="segmented">
+              <button className={slots === DEFAULT_SLOTS ? 'on' : ''} aria-pressed={slots === DEFAULT_SLOTS} onClick={() => setChosenSlots(DEFAULT_SLOTS)}>
+                {DEFAULT_SLOTS}
+              </button>
+            </div>
+            <select
+              aria-label="More windows"
+              className={`switcher-select${slots > DEFAULT_SLOTS ? ' on' : ''}`}
+              value={slots > DEFAULT_SLOTS ? slots : ''}
+              onChange={(e) => setChosenSlots(Number(e.target.value))}
+            >
+              <option value="" disabled>
+                5 – 10
+              </option>
+              {slotOptions(mockups.length).map(({ n, disabled }) => (
+                <option key={n} value={n} disabled={disabled}>
+                  {n} windows{disabled ? ' (needs more PSDs)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
         </section>
 
         <aside className="pane" aria-label="Mockup library">
