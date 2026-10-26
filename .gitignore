@@ -1,0 +1,4 @@
+node_modules
+dist
+.env.local
+sample-psd/real-*.psd
