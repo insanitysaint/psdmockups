@@ -3,7 +3,8 @@ import { AuthButton } from './AuthButton';
 import { Bulk } from './Bulk';
 import { DesignPanel } from './DesignPanel';
 import { Editor } from './Editor';
-import { currentAccount, onAuthChange, useAuth } from './lib/auth';
+import { currentAccount, getToken, hasLiveToken, onAuthChange, useAuth } from './lib/auth';
+import { backupOriginal } from './lib/backup';
 import { defaultBulkSettings, type BulkSettings } from './lib/bulk';
 import { useDesigns } from './lib/useDesigns';
 import { isEdited, type Edits } from './lib/layers';
@@ -13,6 +14,9 @@ import { renderer } from './lib/render';
 import { unsupportedReason } from './lib/support';
 import { adoptGuestFiles, deleteMockup, getBlob, getState, listMockups, previewKey, releaseOwnedFiles, setState, sweepExpired } from './lib/store';
 import type { IngestProgress, MockupRecord } from './lib/types';
+
+/** Progress of a Drive backup, or why it failed. Keyed by mockup id. */
+type BackupStatus = { sent: number; total: number } | { error: string };
 
 interface Job {
   key: string;
@@ -134,6 +138,7 @@ function Card({
   m,
   now,
   selected,
+  backup,
   onToggle,
   onRemove,
   onEdit,
@@ -141,6 +146,7 @@ function Card({
   m: MockupRecord;
   now: number;
   selected: boolean;
+  backup?: BackupStatus;
   onToggle: () => void;
   onRemove: () => void;
   onEdit: () => void;
@@ -178,6 +184,29 @@ function Card({
         <div className="sub expiry">
           <Icon d={I.clock} /> {timeLeft(m.expiresAt, now)}
         </div>
+        {backup && 'error' in backup ? (
+          <div className="sub err" role="alert">
+            Drive backup failed: {backup.error}
+          </div>
+        ) : backup ? (
+          <>
+            <div className="sub">
+              Backing up to Drive · {fmtBytes(backup.sent)} of {fmtBytes(backup.total)}
+            </div>
+            <div className="bar slim">
+              <div style={{ width: `${Math.round((backup.sent / backup.total) * 100)}%` }} />
+            </div>
+          </>
+        ) : (
+          m.backup && (
+            <div className="sub">
+              Original backed up ·{' '}
+              <a href={m.backup.link} target="_blank" rel="noopener noreferrer">
+                Open in Drive
+              </a>
+            </div>
+          )
+        )}
       </div>
       <div className="card-actions">
         <button className="icon-btn" onClick={onRemove} aria-label={`Remove ${m.name}`} title="Remove">
@@ -204,7 +233,10 @@ export function App() {
   const [renderError, setRenderError] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false);
-  const queue = useRef<{ key: string; file: File }[]>([]);
+  const queue = useRef<{ key: string; file: File; backup: boolean }[]>([]);
+  const [backupOn, setBackupOn] = useState(false);
+  const [backups, setBackups] = useState<Record<string, BackupStatus>>({});
+  const backupChain = useRef<Promise<void>>(Promise.resolve());
   const rendersRef = useRef(renders);
   rendersRef.current = renders;
   const [tab, setTab] = useState<'library' | 'edit' | 'bulk'>('library');
@@ -265,18 +297,33 @@ export function App() {
 
   const patchJob = (key: string, p: Partial<Job>) => setJobs((js) => js.map((j) => (j.key === key ? { ...j, ...p } : j)));
 
+  // One upload at a time, so several big PSDs don't fight over the connection.
+  const queueBackup = useCallback((id: string, file: File) => {
+    backupChain.current = backupChain.current.then(async () => {
+      setBackups((b) => ({ ...b, [id]: { sent: 0, total: file.size } }));
+      try {
+        const info = await backupOriginal(file, id, (sent) => setBackups((b) => ({ ...b, [id]: { sent, total: file.size } })));
+        if (info) setMockups((ms) => ms.map((x) => (x.id === id ? { ...x, backup: info } : x)));
+        setBackups(({ [id]: _done, ...rest }) => rest);
+      } catch (e) {
+        setBackups((b) => ({ ...b, [id]: { error: e instanceof Error ? e.message : String(e) } }));
+      }
+    });
+  }, []);
+
   const drain = useCallback(async () => {
     if (busyRef.current) return;
     busyRef.current = true;
     try {
-      let next: { key: string; file: File } | undefined;
+      let next: { key: string; file: File; backup: boolean } | undefined;
       while ((next = queue.current.shift())) {
-        const { key, file } = next;
+        const { key, file, backup } = next;
         try {
           const rec = await ingestFile(file, (progress) => patchJob(key, { progress }));
           setJobs((js) => js.filter((j) => j.key !== key));
           setMockups((ms) => [...ms, rec]);
           setSelected((s) => new Set(s).add(rec.id));
+          if (backup) queueBackup(rec.id, file);
         } catch (e) {
           patchJob(key, { error: e instanceof Error ? e.message : String(e), progress: undefined });
         }
@@ -284,28 +331,32 @@ export function App() {
     } finally {
       busyRef.current = false;
     }
-  }, []);
+  }, [queueBackup]);
 
   const addFiles = useCallback(
     (files: FileList | File[]) => {
+      const backup = backupOn && !!auth.account;
+      // Refresh the Drive token now, while the click/drop still lets Google's popup open; the upload runs later.
+      if (backup && !hasLiveToken()) void getToken().catch(() => undefined);
       // Build jobs outside the state updater: updaters run later (and twice in StrictMode).
       const added: Job[] = [...files].map((f) => {
         const key = crypto.randomUUID();
-        queue.current.push({ key, file: f });
+        queue.current.push({ key, file: f, backup });
         return { key, name: f.name, size: f.size };
       });
       setJobs((js) => [...js, ...added]);
       void drain();
     },
-    [drain],
+    [drain, backupOn, auth.account],
   );
 
   // Edits and bulk options come back after a reload.
   useEffect(() => {
     (async () => {
       try {
-        const [e, b] = await Promise.all([getState<Record<string, Edits>>('edits'), getState<BulkSettings>('bulk')]);
+        const [e, b, bk] = await Promise.all([getState<Record<string, Edits>>('edits'), getState<BulkSettings>('bulk'), getState<boolean>('backupPsd')]);
         if (e) setEdits(e);
+        if (bk) setBackupOn(true);
         if (b) setBulk({ ...defaultBulkSettings(), ...b });
       } catch (err) {
         console.warn('Could not restore saved settings', err);
@@ -319,9 +370,10 @@ export function App() {
     const t = setTimeout(() => {
       void setState('edits', edits).catch(() => undefined);
       void setState('bulk', bulk).catch(() => undefined);
+      void setState('backupPsd', backupOn).catch(() => undefined);
     }, 400);
     return () => clearTimeout(t);
-  }, [edits, bulk, persistLoaded]);
+  }, [edits, bulk, backupOn, persistLoaded]);
 
   // Edits for mockups that no longer exist (expired or removed) are dropped.
   useEffect(() => {
@@ -419,6 +471,7 @@ export function App() {
       return rest;
     });
     setMockups((ms) => ms.filter((x) => x.id !== m.id));
+    setBackups(({ [m.id]: _b, ...rest }) => rest);
     setEdits((e) => {
       const { [m.id]: _e, ...rest } = e;
       return rest;
@@ -571,6 +624,12 @@ export function App() {
             />
           </div>
 
+          {auth.account && (
+            <label className="sub backup-toggle" title='Copies each original PSD into a "Reskin Mockups" folder in your Google Drive after it is added'>
+              <input type="checkbox" checked={backupOn} onChange={(e) => setBackupOn(e.target.checked)} /> Back up original PSDs to my Google Drive
+            </label>
+          )}
+
           <ul className="list">
             {jobs.map((j) => (
               <li key={j.key} className={`card job${j.error ? ' failed' : ''}`}>
@@ -613,6 +672,7 @@ export function App() {
                 m={m}
                 now={now}
                 selected={selected.has(m.id)}
+                backup={backups[m.id]}
                 onToggle={() =>
                   setSelected((s) => {
                     const n = new Set(s);

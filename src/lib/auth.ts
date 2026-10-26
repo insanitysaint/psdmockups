@@ -84,6 +84,8 @@ function set(patch: Partial<Internal>) {
 
 export const isAuthConfigured = () => !!CLIENT_ID;
 export const currentAccount = () => state.account;
+/** True when a Drive token is usable right now, i.e. getToken() would not need to open Google's popup. */
+export const hasLiveToken = () => !!state.token && state.expiresAt - 60_000 > Date.now();
 
 interface Handlers {
   onSignIn?: (email: string) => void | Promise<void>;

@@ -30,6 +30,8 @@ look after.
 - Mockups uploaded while signed in are kept until removed. Guest uploads are deleted after 24 hours.
 - Signing in adopts the guest files already in the browser. Signing out puts kept files back on the 24-hour timer.
 - Bulk exports and single images can be saved to a **Reskin Mockups** folder in the user's Drive.
+- Signed-in users can switch on **Back up original PSDs to my Google Drive**. Each PSD is uploaded to the same folder after it
+  is added (one at a time, resumable). It is off by default, and removing a mockup never deletes the Drive copy.
 - Access tokens live in memory only and last about an hour. After a reload the app remembers who you were and asks
   Google for a fresh token the next time you use Drive.
 

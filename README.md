@@ -60,6 +60,7 @@ a CDN, your own nginx).
 | Edits, colors, layers | `src/lib/layers.ts`, `src/Editor.tsx` |
 | Bulk planning, zip streaming, Drive sink | `src/lib/bulk.ts`, `src/Bulk.tsx` |
 | Google sign-in and Drive upload | `src/lib/auth.ts`, `src/lib/drive.ts` |
+| Drive backup of original PSDs | `src/lib/backup.ts` |
 | AI editing | `src/lib/ai.ts`, `src/AiPanel.tsx` |
 
 ## Things worth knowing

@@ -1,4 +1,4 @@
-import { RECORD_SCHEMA, type MockupRecord } from './types';
+import { RECORD_SCHEMA, type BackupInfo, type MockupRecord } from './types';
 
 const DB_NAME = 'reskin-mockups';
 const DB_VERSION = 2;
@@ -50,6 +50,17 @@ export async function saveMockup(record: MockupRecord, blobs: Map<string, Blob>)
   tx.objectStore(FILES).put(record);
   for (const [k, v] of blobs) tx.objectStore(BLOBS).put(v, k);
   await done(tx);
+}
+
+/** Records a Drive backup on a mockup. Returns false (and writes nothing) if the mockup was removed meanwhile. */
+export async function setBackup(id: string, backup: BackupInfo): Promise<boolean> {
+  const d = await db();
+  const tx = d.transaction(FILES, 'readwrite');
+  const store = tx.objectStore(FILES);
+  const rec = await asPromise(store.get(id) as IDBRequest<MockupRecord | undefined>);
+  if (rec) store.put({ ...rec, backup });
+  await done(tx);
+  return !!rec;
 }
 
 export async function putBlob(key: string, blob: Blob): Promise<void> {

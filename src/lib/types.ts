@@ -53,6 +53,13 @@ export interface LayerMeta {
   children?: LayerMeta[];
 }
 
+/** Where a signed-in user's original PSD was copied to in their Google Drive. */
+export interface BackupInfo {
+  fileId: string;
+  link: string;
+  at: number;
+}
+
 export interface MockupRecord {
   id: string;
   schema: number;
@@ -68,6 +75,8 @@ export interface MockupRecord {
   designTargetId?: string;
   /** Things in the file the renderer can't reproduce yet. */
   warnings: string[];
+  /** Set once the original file has been uploaded to Drive. Optional, so older records stay valid. */
+  backup?: BackupInfo;
   createdAt: number;
   /** null = never expires (signed-in user). */
   expiresAt: number | null;
